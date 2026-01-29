@@ -2,8 +2,17 @@
 #define PROC_H
 
 #include "types.h"
+#define MAX_SYSCALL_NUM 500
 
 #define NPROC (16)
+
+enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+
+struct TaskInfo {
+    enum procstate status;
+    unsigned int syscall_times[MAX_SYSCALL_NUM];
+    int time;   // running time in ms
+};
 
 // Saved registers for kernel context switches.
 struct context {
@@ -25,8 +34,6 @@ struct context {
 	uint64 s11;
 };
 
-enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
-
 // Per-process state
 struct proc {
 	enum procstate state; // Process state
@@ -35,14 +42,9 @@ struct proc {
 	uint64 kstack; // Virtual address of kernel stack
 	struct trapframe *trapframe; // data page for trampoline.S
 	struct context context; // swtch() here to run process
-	/*
-	* LAB1: you may need to add some new fields here
-	*/
+	uint64 start_cycle; // when task first runs
+    uint64 syscall_times[MAX_SYSCALL_NUM]; //syscall counters
 };
-
-/*
-* LAB1: you may need to define struct for TaskInfo here
-*/
 
 struct proc *curr_proc();
 void exit(int);
