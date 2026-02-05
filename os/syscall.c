@@ -5,6 +5,16 @@
 #include "timer.h"
 #include "trap.h"
 
+// Function declarations
+uint64 sys_write(int fd, uint64 va, uint len);
+__attribute__((noreturn)) void sys_exit(int code);
+uint64 sys_sched_yield();
+uint64 sys_gettimeofday(TimeVal *val, int _tz);
+uint64 sys_task_info(TaskInfo *info);
+uint64 sys_getpid(void);
+uint64 sys_mmap(void *start, uint64 len, int prot, int flags, int fd);  
+uint64 sys_munmap(void *start, uint64 len);     
+
 uint64 sys_write(int fd, uint64 va, uint len)
 {
 	debugf("sys_write fd = %d va = %x, len = %d", fd, va, len);
@@ -32,18 +42,143 @@ uint64 sys_sched_yield()
 	return 0;
 }
 
-uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofday in pagetable. (VA to PA)
+uint64 sys_gettimeofday(TimeVal *val, int _tz)
 {
-	// YOUR CODE
-	val->sec = 0;
-	val->usec = 0;
 
-	/* The code in `ch3` will leads to memory bugs*/
+    struct proc *p = curr_proc();
+    TimeVal time;
+    
+    uint64 cycle = get_cycle();
+    time.sec = cycle / CPU_FREQ;
+    time.usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
 
-	// uint64 cycle = get_cycle();
-	// val->sec = cycle / CPU_FREQ;
-	// val->usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
-	return 0;
+    if (copyout(p->pagetable, (uint64)val, (char*)&time, sizeof(TimeVal)) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+uint64 sys_task_info(TaskInfo *info)
+{
+    struct proc *p = curr_proc();
+    if (!p) {
+        return -1;
+    }
+    
+    // Build TaskInfo in kernel space
+    TaskInfo ti;
+    ti.status = p->state;
+    
+    // Copy all syscall counts
+    for (int i = 0; i < MAX_SYSCALL_NUM; i++) {
+        ti.syscall_times[i] = p->syscall_times[i];
+    }
+    
+    // Calculate time
+    uint64 current_cycle = get_cycle();
+    uint64 elapsed_cycles = (current_cycle >= p->start_time) ? 
+                             (current_cycle - p->start_time) : 0;
+    ti.time = (CPU_FREQ > 0) ? (elapsed_cycles / (CPU_FREQ / 1000)) : 0;
+    
+    // Copy in 1KB chunks to handle page boundaries
+    char *src = (char*)&ti;
+    uint64 total = sizeof(TaskInfo);
+    uint64 dst = (uint64)info;
+    
+    while (total > 0) {
+        uint64 chunk = (total > 1024) ? 1024 : total;
+        if (copyout(p->pagetable, dst, src, chunk) < 0) {
+            return -1;
+        }
+        src += chunk;
+        dst += chunk;
+        total -= chunk;
+    }
+    
+    return 0;
+}
+
+
+uint64 sys_mmap(void *start, uint64 len, int prot, int flags, int fd)
+{
+    struct proc *p = curr_proc();
+    uint64 addr = (uint64)start;
+    
+    // Check if start is page-aligned
+    if (addr % PGSIZE != 0) {
+        return -1;
+    }
+    
+    // Check if len is 0 (return immediately)
+    if (len == 0) {
+        return 0;
+    }
+    
+    // Check if len is too large (max 1GiB)
+    if (len > 1024 * 1024 * 1024) {
+        return -1;
+    }
+    
+    // Round len up to page size
+    len = PGROUNDUP(len);
+    
+    // Validate prot flags
+    if ((prot & ~0x7) != 0) {  // Other bits must be 0
+        return -1;
+    }
+    if ((prot & 0x7) == 0) {  // Must have at least one permission
+        return -1;
+    }
+    
+    // Convert prot to PTE flags
+    int pte_flags = PTE_U | PTE_V;  // User accessible and valid
+    if (prot & 0x1) pte_flags |= PTE_R;  // Readable
+    if (prot & 0x2) pte_flags |= PTE_W;  // Writable  
+    if (prot & 0x4) pte_flags |= PTE_X;  // Executable
+    
+    // Allocate and map pages
+    for (uint64 offset = 0; offset < len; offset += PGSIZE) {
+        void *pa = kalloc();
+        if (pa == 0) {
+            // Out of memory - should unmap what we've done, but assignment says not to
+            return -1;
+        }
+        memset(pa, 0, PGSIZE);
+        
+        if (mappages(p->pagetable, addr + offset, PGSIZE, (uint64)pa, pte_flags) != 0) {
+            kfree(pa);
+            return -1;
+        }
+    }
+    
+    return 0;
+}
+
+uint64 sys_munmap(void *start, uint64 len)
+{
+    struct proc *p = curr_proc();
+    uint64 addr = (uint64)start;
+    
+    // Check if start is page-aligned
+    if (addr % PGSIZE != 0) {
+        return -1;
+    }
+    
+    // Round len up to page size
+    len = PGROUNDUP(len);
+    uint64 npages = len / PGSIZE;
+    
+    // Unmap pages (1 = free physical memory)
+    uvmunmap(p->pagetable, addr, npages, 1);
+    
+    return 0;
+}
+
+
+uint64 sys_getpid(void)
+{
+    struct proc *p = curr_proc();
+    return p->pid;
 }
 
 // TODO: add support for mmap and munmap syscall.
@@ -53,10 +188,13 @@ uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofd
 * LAB1: you may need to define sys_task_info here
 */
 
+
+
 extern char trap_page[];
 
 void syscall()
 {
+	struct proc *p = curr_proc();
 	struct trapframe *trapframe = curr_proc()->trapframe;
 	int id = trapframe->a7, ret;
 	uint64 args[6] = { trapframe->a0, trapframe->a1, trapframe->a2,
@@ -66,6 +204,10 @@ void syscall()
 	/*
 	* LAB1: you may need to update syscall counter for task info here
 	*/
+	if (id > 0 && id < MAX_SYSCALL_NUM) {
+        p->syscall_times[id]++;
+    }
+
 	switch (id) {
 	case SYS_write:
 		ret = sys_write(args[0], args[1], args[2]);
@@ -79,9 +221,22 @@ void syscall()
 	case SYS_gettimeofday:
 		ret = sys_gettimeofday((TimeVal *)args[0], args[1]);
 		break;
-	/*
-	* LAB1: you may need to add SYS_taskinfo case here
-	*/
+
+	case SYS_getpid:
+		ret = sys_getpid();
+		break;
+
+	case SYS_task_info:
+        ret = sys_task_info((TaskInfo *)args[0]);
+        break;
+
+	case SYS_mmap:
+		ret = sys_mmap((void *)args[0], args[1], args[2], args[3], args[4]);
+		break;
+	case SYS_munmap:
+		ret = sys_munmap((void *)args[0], args[1]);
+		break;
+
 	default:
 		ret = -1;
 		errorf("unknown syscall %d", id);

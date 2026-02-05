@@ -5,6 +5,14 @@
 #include "types.h"
 
 #define NPROC (16)
+#define MAX_SYSCALL_NUM 500
+#define TASK_INFO_SYSCALL_MAX 32 
+
+typedef struct {
+    int status;
+    uint64 syscall_times[MAX_SYSCALL_NUM]; 
+    uint64 time;
+} TaskInfo;
 
 // Saved registers for kernel context switches.
 struct context {
@@ -38,6 +46,8 @@ struct proc {
 	struct trapframe *trapframe; // data page for trampoline.S
 	struct context context; // swtch() here to run process
 	uint64 max_page;
+	uint64 start_time;                    // When process started (in cycles)
+    uint64 syscall_times[MAX_SYSCALL_NUM]; // Count of each syscall
 	/*
 	* LAB1: you may need to add some new fields here
 	*/
