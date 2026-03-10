@@ -4,6 +4,7 @@
 #define SYS_io_cancel 3
 #define SYS_io_getevents 4
 #define SYS_setxattr 5
+#define SYS_task_info 410
 #define SYS_lsetxattr 6
 #define SYS_fsetxattr 7
 #define SYS_getxattr 8

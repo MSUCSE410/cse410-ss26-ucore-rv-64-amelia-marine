@@ -4,6 +4,7 @@
 #include "trap.h"
 #include "vm.h"
 #include "queue.h"
+#define BIG_STRIDE 65536 
 
 struct proc pool[NPROC];
 __attribute__((aligned(16))) char kstack[NPROC][PAGE_SIZE];
@@ -84,6 +85,8 @@ found:
 	p->parent = NULL;
 	p->exit_code = 0;
 	p->pagetable = uvmcreate((uint64)p->trapframe);
+	p->stride = 0;
+	p->priority = 16;
 	memset(&p->context, 0, sizeof(p->context));
 	memset((void *)p->kstack, 0, KSTACK_SIZE);
 	memset((void *)p->trapframe, 0, TRAP_PAGE_SIZE);
@@ -99,30 +102,35 @@ found:
 //    via swtch back to the scheduler.
 void scheduler()
 {
+
 	struct proc *p;
-	for (;;) {
-		/*int has_proc = 0;
-		for (p = pool; p < &pool[NPROC]; p++) {
-			if (p->state == RUNNABLE) {
-				has_proc = 1;
-				tracef("swtich to proc %d", p - pool);
-				p->state = RUNNING;
-				current_proc = p;
-				swtch(&idle.context, &p->context);
-			}
-		}
-		if(has_proc == 0) {
-			panic("all app are over!\n");
-		}*/
-		p = fetch_task();
-		if (p == NULL) {
-			panic("all app are over!\n");
-		}
-		tracef("swtich to proc %d", p - pool);
-		p->state = RUNNING;
-		current_proc = p;
-		swtch(&idle.context, &p->context);
-	}
+    for (;;) {
+
+        struct proc *min_p = NULL;
+
+		// Iterates through all processes in the pool 
+        for (p = pool; p < &pool[NPROC]; p++) {
+			// Only consider runnable processes
+            if (p->state == RUNNABLE) {
+				// If the current process has a lower stride than the current min_p or min_p isn't set 
+                if (min_p == NULL || p->stride < min_p->stride) {
+                    min_p = p;
+                }
+            }
+        }
+		
+		// No runnable processes found 
+        if (min_p == NULL) {
+            panic("all app are over!\n");
+        }
+
+        // Update stride (higher priority = smaller stride increase)
+        min_p->stride += BIG_STRIDE / min_p->priority;
+        min_p->state = RUNNING;
+        current_proc = min_p;
+		// Switch from scheduler into the process
+        swtch(&idle.context, &min_p->context);
+    }
 }
 
 // Switch to scheduler.  Must hold only p->lock
@@ -144,7 +152,6 @@ void sched()
 void yield()
 {
 	current_proc->state = RUNNABLE;
-	add_task(current_proc);
 	sched();
 }
 
@@ -184,7 +191,6 @@ int fork()
 	np->trapframe->a0 = 0;
 	np->parent = p;
 	np->state = RUNNABLE;
-	add_task(np);
 	return np->pid;
 }
 
@@ -214,10 +220,10 @@ int wait(int pid, int *code)
 			    (pid <= 0 || np->pid == pid)) {
 				havekids = 1;
 				if (np->state == ZOMBIE) {
-					// Found one.
 					np->state = UNUSED;
 					pid = np->pid;
 					*code = np->exit_code;
+					freeproc(np);
 					return pid;
 				}
 			}
@@ -226,7 +232,6 @@ int wait(int pid, int *code)
 			return -1;
 		}
 		p->state = RUNNABLE;
-		add_task(p);
 		sched();
 	}
 }
@@ -237,7 +242,6 @@ void exit(int code)
 	struct proc *p = curr_proc();
 	p->exit_code = code;
 	debugf("proc %d exit with %d\n", p->pid, code);
-	freeproc(p);
 	if (p->parent != NULL) {
 		// Parent should `wait`
 		p->state = ZOMBIE;
@@ -249,5 +253,14 @@ void exit(int code)
 			np->parent = NULL;
 		}
 	}
+
+	 if (p->parent != NULL) {
+        // Parent will reap via wait()
+        p->state = ZOMBIE;
+    } else {
+        // No parent, free immediately
+        freeproc(p);
+    }
+
 	sched();
 }

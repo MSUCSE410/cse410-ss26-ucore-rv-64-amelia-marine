@@ -8,6 +8,15 @@
 #define NPROC (512)
 #define FD_BUFFER_SIZE (16)
 
+#define MAX_SYSCALL_NUM 500
+#define TASK_INFO_SYSCALL_MAX 32 
+
+typedef struct {
+    int status;
+    uint64 syscall_times[MAX_SYSCALL_NUM]; 
+    uint64 time;
+} TaskInfo;
+
 struct file;
 
 // Saved registers for kernel context switches.
@@ -41,10 +50,14 @@ struct proc {
 	uint64 kstack; // Virtual address of kernel stack
 	struct trapframe *trapframe; // data page for trampoline.S
 	struct context context; // swtch() here to run process
+	uint64 start_time;                    // When process started (in cycles)
+    uint64 syscall_times[MAX_SYSCALL_NUM];
 	uint64 max_page;
 	struct proc *parent; // Parent process
 	uint64 exit_code;
 	struct file *files[FD_BUFFER_SIZE];
+	uint64 stride;      
+    uint64 priority; 
 };
 
 int cpuid();
