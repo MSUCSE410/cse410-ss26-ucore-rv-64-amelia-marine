@@ -80,8 +80,8 @@ build/kernel: $(OBJS) os/kernel.ld
 	@echo 'Build kernel done'
 
 clean:
-	rm -rf $(BUILDDIR) os/initproc.S
-	rm $(F)/*.img
+	rm -rf build os/initproc.S
+	rm -f nfs/*.img
 
 # BOARD
 BOARD		?= qemu
