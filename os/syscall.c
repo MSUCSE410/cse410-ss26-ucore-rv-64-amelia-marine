@@ -177,19 +177,148 @@ uint64 sys_close(int fd)
 	return 0;
 }
 
-int sys_fstat(int fd,uint64 stat){
-	//TODO: your job is to complete the syscall
-	return -1;
+int sys_fstat(int fd, uint64 stat_addr)
+{
+    // Reject out-of-range file descriptors
+    if (fd < 0 || fd >= FD_BUFFER_SIZE)
+        return -1;
+
+    // Get the current process
+    struct proc *p = curr_proc();
+
+    // Look up the file in the process's file table
+    struct file *f = p->files[fd];
+
+    // fd must refer to an inode-backed file (not stdio)
+    if (f == NULL || f->type != FD_INODE)
+        return -1;
+
+    // Make sure the inode is loaded from disk into memory
+    ivalid(f->ip);
+
+    // Define the Stat struct layout expected by userspace
+    typedef struct {
+        uint64 dev;     // disk drive number (always 0 in our impl)
+        uint64 ino;     // inode number uniquely identifying the file
+        uint32 mode;    // file type (directory or regular file)
+        uint32 nlink;   // number of hard links pointing to this inode
+        uint64 pad[7];  // padding for compatibility, unused
+    } Stat;
+
+    // Fill in the stat struct with info from the inode
+    Stat st;
+    st.dev = 0;                                                      // we only have one disk
+    st.ino = f->ip->inum;                                            // inode number from in-memory inode
+    st.mode = (f->ip->type == T_DIR) ? 0x040000 : 0x100000;         // directory vs regular file
+    st.nlink = f->ip->nlink;                                         // hard link count
+    memset(st.pad, 0, sizeof(st.pad));                               // zero out padding
+
+    // Copy the filled stat struct from kernel space to user space
+    copyout(p->pagetable, stat_addr, (char *)&st, sizeof(st));
+
+    return 0;
 }
 
-int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint64 flags){
-	//TODO: your job is to complete the syscall
-	return -1;
+int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint64 flags)
+{
+    struct proc *p = curr_proc();
+    char old[200], new[200];
+
+    // Copy both file path strings from user space into kernel buffers
+    copyinstr(p->pagetable, old, oldpath, 200);
+    copyinstr(p->pagetable, new, newpath, 200);
+
+    // Linking a file to itself (same name) is an error
+    if (strncmp(old, new, 200) == 0)
+        return -1;
+
+    // Look up the inode for the existing file
+    struct inode *ip = namei(old);
+
+    // If the source file doesn't exist, fail
+    if (ip == NULL)
+        return -1;
+
+    // Ensure the inode data is loaded from disk
+    ivalid(ip);
+
+    // Get the root directory inode (our FS is flat, one directory)
+    struct inode *dp = root_dir();
+    ivalid(dp);
+
+    // Add a new directory entry mapping newpath -> same inode number
+    // This is what creates the hard link
+    if (dirlink(dp, new, ip->inum) < 0) {
+        // dirlink failed (e.g. name already exists), clean up and return error
+        iput(dp);
+        iput(ip);
+        return -1;
+    }
+
+    // Increment the link count since a new directory entry now points to this inode
+    ip->nlink++;
+
+    // Write the updated inode (with new nlink) back to disk
+    iupdate(ip);
+
+    // Release our reference to the root directory inode
+    iput(dp);
+
+    // Release our reference to the file inode
+    iput(ip);
+
+    return 0;
 }
 
-int sys_unlinkat(int dirfd, uint64 name, uint64 flags){
-	//TODO: your job is to complete the syscall
-	return -1;
+int sys_unlinkat(int dirfd, uint64 name, uint64 flags)
+{
+    struct proc *p = curr_proc();
+    char path[200];
+
+    // Copy the file path from user space into a kernel buffer
+    copyinstr(p->pagetable, path, name, 200);
+
+    // Look up the inode for the file to be unlinked
+    struct inode *ip = namei(path);
+
+    // If the file doesn't exist, return error
+    if (ip == NULL)
+        return -1;
+
+    // Ensure the inode is loaded from disk into memory
+    ivalid(ip);
+
+    // Get the root directory inode (flat FS, all files are in root)
+    struct inode *dp = root_dir();
+    ivalid(dp);
+
+    // Remove the directory entry that maps this name to the inode
+    // This does not delete the file if other hard links still exist
+    if (dirunlink(dp, path) < 0) {
+        // Failed to find or remove the directory entry
+        iput(dp);
+        iput(ip);
+        return -1;
+    }
+
+    // Release our reference to the root directory inode
+    iput(dp);
+
+    // Decrement the hard link count since one directory entry was removed
+    ip->nlink--;
+
+    // Write the updated link count back to disk
+    iupdate(ip);
+
+    // If no more hard links remain, free all data blocks (delete the file)
+    if (ip->nlink == 0)
+        itrunc(ip);
+
+    // Release our reference to the inode
+    // iput will mark it invalid and free it if nlink == 0
+    iput(ip);
+
+    return 0;
 }
 
 extern char trap_page[];
@@ -247,6 +376,7 @@ void syscall()
 		break;
 	case SYS_unlinkat:
 	    ret = sys_unlinkat(args[0],args[1],args[2]);
+		break;
 	case SYS_spawn:
 		ret = sys_spawn(args[0]);
 		break;
