@@ -22,6 +22,10 @@ AS_OBJS = $(addprefix $(BUILDDIR)/, $(addsuffix .o, $(basename $(AS_SRCS))))
 OBJS = $(C_OBJS) $(AS_OBJS)
 
 HEADER_DEP = $(addsuffix .d, $(basename $(C_OBJS)))
+ifeq (,$(findstring link_app.o,$(OBJS)))
+	AS_OBJS += $(BUILDDIR)/$K/link_app.o
+endif
+-include $(HEADER_DEP)
 
 CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb
 CFLAGS += -MD
@@ -82,14 +86,14 @@ $(BUILDDIR)/$K/link_app.o: $(K)/link_app.S
 		
 build: build/kernel
 
-build/kernel: $(OBJS) os/kernel.ld
+build/kernel: $(OBJS) os/kernel.ld $(K)/link_app.S
 	$(LD) $(LDFLAGS) -T os/kernel.ld -o $(BUILDDIR)/kernel $(OBJS)
 	$(OBJDUMP) -S $(BUILDDIR)/kernel > $(BUILDDIR)/kernel.asm
 	$(OBJDUMP) -t $(BUILDDIR)/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(BUILDDIR)/kernel.sym
 	@echo 'Build kernel done'
 
 clean:
-	rm -rf build os/initproc.S
+	rm -rf build os/initproc.S os/link_app.S
 	rm -f nfs/*.img
 
 # BOARD
