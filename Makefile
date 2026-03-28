@@ -70,6 +70,8 @@ $(HEADER_DEP): $(BUILDDIR)/$K/%.d : $K/%.c
 	@set -e; rm -f $@; $(CC) -MM $< $(INCLUDEFLAGS) > $@.$$$$; \
         sed 's,\($*\)\.o[ :]*,\1.o $@ : ,g' < $@.$$$$ > $@; \
         rm -f $@.$$$$
+
+INIT_PROC ?= ch6_usertest
 		
 build: build/kernel
 

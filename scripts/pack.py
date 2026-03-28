@@ -6,7 +6,7 @@ import argparse
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('INIT_PROC', default="usershell")
+    parser.add_argument('INIT_PROC', default="ch6_usertest")
     args = parser.parse_args()
 
     f = open("os/link_app.S", mode="w")
