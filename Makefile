@@ -72,6 +72,13 @@ $(HEADER_DEP): $(BUILDDIR)/$K/%.d : $K/%.c
         rm -f $@.$$$$
 
 INIT_PROC ?= ch6_usertest
+
+$(K)/link_app.S: scripts/pack.py .FORCE
+	@$(PY) scripts/pack.py $(INIT_PROC)
+
+$(BUILDDIR)/$K/link_app.o: $(K)/link_app.S
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $< -o $@
 		
 build: build/kernel
 
