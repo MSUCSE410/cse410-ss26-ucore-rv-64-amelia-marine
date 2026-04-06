@@ -3,7 +3,7 @@
     {
       "name": "run_os",
       "setup": "",
-      "run": "make clean test BASE=0",
+      "run": "make clean test BASE=0 INIT_PROC=ch8_usertest",
       "input": "",
       "output": "",
       "comparison": "included",
